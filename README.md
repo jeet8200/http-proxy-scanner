@@ -1,6 +1,6 @@
 #for personal use
 
-# For any f..ked up situation who forces someone to use this Proxy Scanner
+
 
 # 🌐 HTTP Proxy Scanner
 
