@@ -103,3 +103,7 @@ Ethical and Legal Considerations
     Network Load:
     With a default of 200 concurrent connections, this script can generate significant network traffic.
     Be careful: Running large-scale scans may trigger abuse detection or get your IP blacklisted.
+
+Enjoy your proxy scanning! 🔍✨
+
+     If you found this useful, consider starring the repo! 😊
