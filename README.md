@@ -90,3 +90,15 @@ The program will automatically create:
     working_proxies.txt (verified proxies)
 
     working_ranges.txt (productive IP ranges)
+
+#THINGS TO KNOW BEFOR USEING
+
+Ethical and Legal Considerations
+
+    Intended Use:
+    The script is designed to scan for open HTTP proxies, especially in Iranian IP ranges.
+    Note: Scanning IP ranges you do not own or have explicit permission to scan may violate laws or terms of service in many regions.
+    You are responsible for ensuring your usage is legal and ethical.
+    Network Load:
+    With a default of 200 concurrent connections, this script can generate significant network traffic.
+    Be careful: Running large-scale scans may trigger abuse detection or get your IP blacklisted.
