@@ -1,24 +1,6 @@
 #for personal use
 # For any f..ked up Place who forces someone to use this Proxy Scanner
-Menu Options:
 
-  1:  Scan for proxies
-
-  2:  Test found proxies
-
-  3:  View working proxies
-
-  4:  Update IP ranges
-
-  5:  Check single proxy
-
-  6:  Settings
-
-  7:  View debug log
-
-  8:  Toggle debug mode
-
-  0:  Exit
 # 🌐 HTTP Proxy Scanner
 
 ![Python](https://img.shields.io/badge/python-3.7%2B-blue)
