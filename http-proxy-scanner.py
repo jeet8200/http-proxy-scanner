@@ -27,6 +27,7 @@ WORKING_PROXIES_FILE = "working_proxies.txt"
 WORKING_RANGES_FILE = "working_ranges.txt"
 CONFIG_FILE = "proxy_scanner.cfg"
 DATABASE_FILE = "proxies.db"
+RESULTS_FILE = "results.txt"
 
 # ========== COLORS ==========
 class Colors:
@@ -66,13 +67,13 @@ class ProxyScanner:
         self.concurrency_limit = DEFAULT_THREADS
         self.debug_mode = False
         self.debug_log = []
+        self.scan_results = []
         self.load_config()
         self.setup_files()
         self.setup_database()
         self.session = None
 
     def log_debug(self, message: str) -> None:
-        """Log debug messages if debug mode is enabled"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         debug_msg = f"[DEBUG][{timestamp}] {message}"
         self.debug_log.append(debug_msg)
@@ -80,9 +81,9 @@ class ProxyScanner:
             print(f"{Colors.MAGENTA}{debug_msg}{Colors.RESET}")
 
     def setup_files(self) -> None:
-        """Initialize required files with error handling"""
         try:
-            for f in [IP_RANGES_FILE, OPEN_PROXIES_FILE, WORKING_PROXIES_FILE, WORKING_RANGES_FILE, DEBUG_LOG_FILE]:
+            for f in [IP_RANGES_FILE, OPEN_PROXIES_FILE, WORKING_PROXIES_FILE, 
+                     WORKING_RANGES_FILE, DEBUG_LOG_FILE, RESULTS_FILE]:
                 if not os.path.exists(f):
                     with open(f, 'w'):
                         pass
@@ -92,7 +93,6 @@ class ProxyScanner:
             sys.exit(1)
 
     def setup_database(self) -> None:
-        """Initialize SQLite database for proxy storage with error handling"""
         try:
             self.conn = sqlite3.connect(DATABASE_FILE)
             self.cursor = self.conn.cursor()
@@ -132,7 +132,6 @@ class ProxyScanner:
             sys.exit(1)
 
     async def async_init(self) -> None:
-        """Initialize async session with proper headers and limits"""
         self.session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(
                 limit=self.concurrency_limit,
@@ -145,7 +144,6 @@ class ProxyScanner:
         self.log_debug("Async session initialized")
 
     async def close(self) -> None:
-        """Cleanup resources properly"""
         try:
             if self.session and not self.session.closed:
                 await self.session.close()
@@ -156,7 +154,6 @@ class ProxyScanner:
             print(f"{Colors.YELLOW}[!] Cleanup error: {e}{Colors.RESET}")
 
     def get_random_headers(self) -> Dict[str, str]:
-        """Generate random headers for each request"""
         headers = {
             'User-Agent': random.choice(USER_AGENTS),
             'Accept': 'text/html,application/xhtml+xml',
@@ -170,7 +167,6 @@ class ProxyScanner:
         return headers
 
     def load_config(self) -> None:
-        """Load configuration from file with validation"""
         try:
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE) as f:
@@ -195,7 +191,6 @@ class ProxyScanner:
             print(f"{Colors.YELLOW}[!] Config load error: {e}{Colors.RESET}")
 
     def save_config(self) -> None:
-        """Save current configuration to file with error handling"""
         try:
             with open(CONFIG_FILE, 'w') as f:
                 json.dump({
@@ -207,15 +202,24 @@ class ProxyScanner:
         except Exception as e:
             print(f"{Colors.RED}[!] Config save error: {e}{Colors.RESET}")
 
+    def add_scan_result(self, result_type: str, details: str, status: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.scan_results.append({
+            'timestamp': timestamp,
+            'type': result_type,
+            'details': details,
+            'status': status
+        })
+        self.log_debug(f"Added scan result: {result_type} - {details} - {status}")
+
     async def check_single_ip(self) -> None:
-        """Check a single IP address with user-specified port"""
         clear_screen()
         print(f"{Colors.CYAN}=== Check Single Proxy ==={Colors.RESET}")
         
         try:
             ip = input("Enter IP address: ").strip()
             try:
-                ipaddress.ip_address(ip)  # Validate IP format
+                ipaddress.ip_address(ip)
             except ValueError:
                 print(f"{Colors.RED}[!] Invalid IP address format{Colors.RESET}")
                 return
@@ -226,14 +230,13 @@ class ProxyScanner:
             
             print(f"\n{Colors.YELLOW}[*] Testing {ip}:{port}...{Colors.RESET}")
             
-            # Test the proxy
             start_time = time.time()
             success, _, _ = await self.check_proxy(ip, port)
             
             if success:
                 print(f"\n{Colors.GREEN}[✓] Proxy {ip}:{port} is working!{Colors.RESET}")
+                self.add_scan_result("Single Proxy Check", f"{ip}:{port}", "Working")
                 
-                # Perform full test
                 proxy = f"{ip}:{port}"
                 proxy_result, speed, anonymity = await self.test_proxy_connection(proxy)
                 
@@ -243,31 +246,82 @@ class ProxyScanner:
                     print(f"Speed: {speed}ms")
                     print(f"Anonymity: {anonymity}")
                     
-                    # Get additional details
                     details = await self.get_proxy_details(ip)
                     print(f"Country: {details.get('country', 'Unknown')}")
                     print(f"ISP: {details.get('isp', 'Unknown')}")
                     
-                    # Ask if user wants to save to database
                     save = input("\nSave to database? (y/n): ").strip().lower()
                     if save == 'y':
                         self.save_to_database(proxy, speed, anonymity, details)
                         print(f"{Colors.GREEN}[✓] Saved to database{Colors.RESET}")
                 else:
                     print(f"\n{Colors.YELLOW}[!] Proxy responded but failed full test{Colors.RESET}")
+                    self.add_scan_result("Single Proxy Check", f"{ip}:{port}", "Partial Success")
             else:
                 print(f"\n{Colors.RED}[✗] Proxy {ip}:{port} is not working{Colors.RESET}")
+                self.add_scan_result("Single Proxy Check", f"{ip}:{port}", "Failed")
             
             elapsed = time.time() - start_time
             print(f"\nTest completed in {elapsed:.2f} seconds")
             
         except Exception as e:
             print(f"\n{Colors.RED}[!] Error testing proxy: {e}{Colors.RESET}")
+            self.add_scan_result("Single Proxy Check", f"{ip}:{port}", f"Error: {str(e)}")
         
         input("\nPress Enter to continue...")
 
+    def save_results_to_file(self) -> None:
+        clear_screen()
+        print(f"{Colors.CYAN}=== Saving Results ==={Colors.RESET}")
+        
+        try:
+            with open(RESULTS_FILE, 'w') as f:
+                f.write("=== Proxy Scanner Results ===\n")
+                f.write(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                
+                if not self.scan_results:
+                    f.write("No scan results available\n")
+                    print(f"{Colors.YELLOW}No results to save{Colors.RESET}")
+                    return
+                
+                f.write("=== Scan History ===\n")
+                for result in self.scan_results:
+                    f.write(f"[{result['timestamp']}] {result['type']}\n")
+                    f.write(f"Details: {result['details']}\n")
+                    f.write(f"Status: {result['status']}\n\n")
+                
+                f.write("\n=== Current Working Proxies ===\n")
+                try:
+                    self.cursor.execute('SELECT COUNT(*) FROM proxies WHERE is_active = 1')
+                    count = self.cursor.fetchone()[0]
+                    f.write(f"Total working proxies in database: {count}\n\n")
+                    
+                    self.cursor.execute('''
+                        SELECT ip, port, speed, anonymity, country, isp 
+                        FROM proxies 
+                        WHERE is_active = 1 
+                        ORDER BY speed ASC 
+                        LIMIT 100
+                    ''')
+                    proxies = self.cursor.fetchall()
+                    
+                    if proxies:
+                        f.write("Top 100 fastest proxies:\n")
+                        f.write("IP:Port\t\tSpeed\tAnonymity\tCountry\tISP\n")
+                        f.write("-"*80 + "\n")
+                        for proxy in proxies:
+                            f.write(f"{proxy[0]}:{proxy[1]}\t{proxy[2]}ms\t{proxy[3]}\t{proxy[4]}\t{proxy[5]}\n")
+                    else:
+                        f.write("No working proxies found in database\n")
+                except sqlite3.Error as e:
+                    f.write(f"\nError accessing database: {str(e)}\n")
+            
+            print(f"{Colors.GREEN}[✓] Results saved to {RESULTS_FILE}{Colors.RESET}")
+            self.log_debug(f"Scan results saved to {RESULTS_FILE}")
+        except IOError as e:
+            print(f"{Colors.RED}[!] Error saving results: {e}{Colors.RESET}")
+
     def generate_targeted_ips(self, count: int) -> List[str]:
-        """Generate IPs more likely to contain proxies with improved sampling"""
         targets = set()
         
         if os.path.exists(WORKING_RANGES_FILE):
@@ -300,8 +354,7 @@ class ProxyScanner:
                         net = ipaddress.IPv4Network(r)
                         sample_size = min(50, len(list(net.hosts())))
                         targets.update(
-                            str(ip) for ip in random.sample(list(net.hosts()), sample_size)
-                        )
+                            str(ip) for ip in random.sample(list(net.hosts()), sample_size))
                     except ValueError:
                         continue
             except IOError as e:
@@ -316,7 +369,6 @@ class ProxyScanner:
         return result
 
     async def stealth_check(self, ip: str, port: int) -> bool:
-        """Advanced stealth detection with Iranian-specific checks"""
         try:
             delay = random.uniform(0.1, 1.5)
             self.log_debug(f"Testing {ip}:{port} with delay {delay:.2f}s")
@@ -367,7 +419,6 @@ class ProxyScanner:
             return False
 
     async def scan_for_open_proxies(self) -> None:
-        """Async IP scanning with improved targeting and progress tracking"""
         clear_screen()
         print(f"{Colors.CYAN}=== Proxy Scanning Options ==={Colors.RESET}")
         print(f"{Colors.GREEN}[1]{Colors.RESET} Scan Iranian IP ranges")
@@ -377,7 +428,9 @@ class ProxyScanner:
         choice = input("\nSelect scan type: ").strip()
         
         ip_list = []
+        scan_type = ""
         if choice == "1":
+            scan_type = "Iranian IP Ranges Scan"
             try:
                 with open(IP_RANGES_FILE) as f:
                     all_ranges = [line.strip() for line in f if line.strip()]
@@ -399,6 +452,7 @@ class ProxyScanner:
                         
                     selected_ranges = random.sample(all_ranges, range_count)
                     self.log_debug(f"Selected {range_count} IP ranges to scan")
+                    self.add_scan_result(scan_type, f"Scanning {range_count} IP ranges", "Started")
                     
                     print(f"{Colors.CYAN}[*] Scanning {range_count} IP ranges...{Colors.RESET}")
                     
@@ -416,19 +470,23 @@ class ProxyScanner:
                     
             except Exception as e:
                 print(f"{Colors.RED}[!] Error: {e}{Colors.RESET}")
+                self.add_scan_result(scan_type, "Initialization", f"Error: {str(e)}")
                 return
             
         elif choice == "2":
+            scan_type = "Targeted IP Scan"
             try:
                 count = int(input(f"IPs to scan (max {MAX_RANDOM_IPS}): "))
                 count = max(10, min(count, MAX_RANDOM_IPS))
                 ip_list = self.generate_targeted_ips(count)
                 self.log_debug(f"Generated {count} targeted IPs")
+                self.add_scan_result(scan_type, f"Scanning {count} targeted IPs", "Started")
             except ValueError:
                 print(f"{Colors.RED}[!] Invalid input{Colors.RESET}")
                 return
             
         elif choice == "3":
+            scan_type = "Working Ranges Scan"
             if not os.path.exists(WORKING_RANGES_FILE):
                 print(f"{Colors.RED}[!] No working ranges found{Colors.RESET}")
                 return
@@ -438,6 +496,7 @@ class ProxyScanner:
                     ranges = [line.strip() for line in f if line.strip()]
                 
                 self.log_debug(f"Found {len(ranges)} working ranges")
+                self.add_scan_result(scan_type, f"Scanning {len(ranges)} working ranges", "Started")
                 
                 for r in ranges[:20]:
                     try:
@@ -448,10 +507,12 @@ class ProxyScanner:
                         
                 if not ip_list:
                     print(f"{Colors.RED}[!] No valid IPs in working ranges{Colors.RESET}")
+                    self.add_scan_result(scan_type, "No valid IPs in working ranges", "Failed")
                     return
                     
             except Exception as e:
                 print(f"{Colors.RED}[!] Error: {e}{Colors.RESET}")
+                self.add_scan_result(scan_type, "Initialization", f"Error: {str(e)}")
                 return
             
         else:
@@ -469,6 +530,7 @@ class ProxyScanner:
             self.log_debug("Cleared open proxies file")
         except IOError as e:
             print(f"{Colors.RED}[!] Error clearing output file: {e}{Colors.RESET}")
+            self.add_scan_result(scan_type, "File operation", f"Error: {str(e)}")
             return
 
         tasks = [(ip, port) for ip in ip_list for port in self.ports]
@@ -481,6 +543,7 @@ class ProxyScanner:
         for i in range(0, len(tasks), batch_size):
             if self.stop_event.is_set():
                 self.log_debug("Scan stopped by user")
+                self.add_scan_result(scan_type, "Scan progress", "Stopped by user")
                 break
                 
             batch = tasks[i:i+batch_size]
@@ -497,6 +560,7 @@ class ProxyScanner:
                         self.log_debug(f"Found open proxy: {ip}:{port}")
                     except IOError as e:
                         print(f"{Colors.RED}[!] Error saving proxy: {e}{Colors.RESET}")
+                        self.add_scan_result(scan_type, f"Saving proxy {ip}:{port}", f"Error: {str(e)}")
             
             self.completed_tests += len(batch)
             elapsed = time.time() - self.start_time
@@ -506,11 +570,11 @@ class ProxyScanner:
 
         elapsed = time.time() - self.start_time
         self.log_debug(f"Scan completed. Found {found_proxies} proxies in {elapsed:.2f} seconds")
+        self.add_scan_result(scan_type, "Scan completed", f"Found {found_proxies} proxies in {int(elapsed)}s")
         print(f"\n{Colors.GREEN}[✓] Found {found_proxies} proxies in {int(elapsed)}s "
               f"({int(found_proxies/max(1, elapsed))}/s){Colors.RESET}")
 
     async def check_proxy(self, ip: str, port: int) -> Tuple[bool, str, int]:
-        """Check if a proxy is open and working with retry logic"""
         for attempt in range(MAX_RETRIES + 1):
             try:
                 self.log_debug(f"Attempt {attempt + 1} for {ip}:{port}")
@@ -525,21 +589,24 @@ class ProxyScanner:
         return (False, ip, port)
 
     async def test_working_proxies(self) -> None:
-        """Test found proxies with async support and improved error handling"""
         if not os.path.exists(OPEN_PROXIES_FILE):
             print(f"{Colors.RED}[!] No proxies found to test{Colors.RESET}")
+            self.add_scan_result("Proxy Testing", "Initialization", "No proxies to test")
             return
 
         try:
             with open(OPEN_PROXIES_FILE) as f:
                 proxies = [line.strip() for line in f if line.strip()]
             self.log_debug(f"Loaded {len(proxies)} proxies for testing")
+            self.add_scan_result("Proxy Testing", f"Loaded {len(proxies)} proxies", "Started")
         except IOError as e:
             print(f"{Colors.RED}[!] Error reading proxies: {e}{Colors.RESET}")
+            self.add_scan_result("Proxy Testing", "File operation", f"Error: {str(e)}")
             return
 
         if not proxies:
             print(f"{Colors.RED}[!] No proxies to test{Colors.RESET}")
+            self.add_scan_result("Proxy Testing", "No proxies loaded", "Failed")
             return
 
         self.total_tests = len(proxies)
@@ -553,6 +620,7 @@ class ProxyScanner:
             self.log_debug("Cleared output files")
         except IOError as e:
             print(f"{Colors.RED}[!] Error clearing output files: {e}{Colors.RESET}")
+            self.add_scan_result("Proxy Testing", "File operation", f"Error: {str(e)}")
             return
 
         working_proxies = 0
@@ -561,6 +629,7 @@ class ProxyScanner:
         for i in range(0, len(proxies), batch_size):
             if self.stop_event.is_set():
                 self.log_debug("Testing stopped by user")
+                self.add_scan_result("Proxy Testing", "Testing progress", "Stopped by user")
                 break
                 
             batch = proxies[i:i+batch_size]
@@ -579,8 +648,10 @@ class ProxyScanner:
                         with open(WORKING_PROXIES_FILE, 'a') as f:
                             f.write(f"{proxy}\n")
                         self.log_debug(f"Working proxy: {proxy} (speed: {speed}ms, anonymity: {anonymity})")
+                        self.add_scan_result("Proxy Testing", f"Working proxy: {proxy}", f"Speed: {speed}ms, Anonymity: {anonymity}")
                     except Exception as e:
                         print(f"{Colors.YELLOW}[!] Error processing proxy {proxy}: {e}{Colors.RESET}")
+                        self.add_scan_result("Proxy Testing", f"Processing proxy {proxy}", f"Error: {str(e)}")
             
             self.completed_tests += len(batch)
             elapsed = time.time() - self.start_time
@@ -590,11 +661,11 @@ class ProxyScanner:
 
         elapsed = time.time() - self.start_time
         self.log_debug(f"Testing completed. Found {working_proxies} working proxies in {elapsed:.2f} seconds")
+        self.add_scan_result("Proxy Testing", "Testing completed", f"Found {working_proxies} working proxies in {int(elapsed)}s")
         print(f"\n{Colors.GREEN}[✓] Verified {working_proxies} working proxies in {int(elapsed)}s "
               f"({int(working_proxies/max(1, elapsed))}/s){Colors.RESET}")
 
     async def test_proxy_connection(self, proxy: str) -> Tuple[str, Optional[int], str]:
-        """Test proxy connection with async support and improved reliability"""
         ip, port = proxy.split(':')
         port = int(port)
         proxy_url = f"http://{ip}:{port}"
@@ -626,7 +697,6 @@ class ProxyScanner:
         return (proxy, None, "Unknown")
 
     async def detect_anonymity(self, proxy_url: str) -> str:
-        """Check proxy anonymity level with improved detection"""
         try:
             test_urls = [
                 "http://httpbin.org/headers",
@@ -663,7 +733,6 @@ class ProxyScanner:
             return "Unknown"
 
     def save_to_database(self, proxy: str, speed: int, anonymity: str, details: dict) -> None:
-        """Save proxy to SQLite database with error handling"""
         ip, port = proxy.split(':')
         try:
             self.cursor.execute('''
@@ -687,7 +756,6 @@ class ProxyScanner:
             print(f"{Colors.YELLOW}[!] Database error saving proxy {proxy}: {e}{Colors.RESET}")
 
     def save_working_range(self, ip: str) -> None:
-        """Save the /24 range of a working proxy with validation"""
         try:
             network = ipaddress.IPv4Network(f"{ip}/24", strict=False)
             with open(WORKING_RANGES_FILE, 'a') as f:
@@ -697,7 +765,6 @@ class ProxyScanner:
             print(f"{Colors.YELLOW}[!] Error saving working range for {ip}: {e}{Colors.RESET}")
 
     async def get_proxy_details(self, ip: str) -> dict:
-        """Get geolocation and ISP details with fallback"""
         details = {
             "country": "IR",
             "city": "Unknown",
@@ -707,7 +774,6 @@ class ProxyScanner:
         return details
 
     def view_working_proxies(self) -> None:
-        """Display working proxies from database with pagination"""
         clear_screen()
         print(f"{Colors.CYAN}=== Working Proxies ==={Colors.RESET}")
         
@@ -755,7 +821,6 @@ class ProxyScanner:
         input("\nPress Enter to continue...")
 
     async def update_iran_ip_ranges(self) -> bool:
-        """Update Iranian IP ranges with multiple sources and progress feedback"""
         clear_screen()
         print(f"{Colors.MAGENTA}[*] Updating Iranian IP ranges...{Colors.RESET}")
         
@@ -798,13 +863,13 @@ class ProxyScanner:
                 f.write("\n".join(sorted(collected_ranges)))
             print(f"{Colors.GREEN}[✓] Saved {len(collected_ranges)} total ranges{Colors.RESET}")
             self.log_debug(f"Saved {len(collected_ranges)} IP ranges to file")
+            self.add_scan_result("IP Range Update", "Updated Iranian IP ranges", f"Added {len(collected_ranges)} ranges")
             return True
         except IOError as e:
             print(f"{Colors.RED}[!] Save error: {e}{Colors.RESET}")
             return False
 
     def show_settings(self) -> None:
-        """Display and update settings with validation"""
         clear_screen()
         print(f"{Colors.YELLOW}=== Current Settings ==={Colors.RESET}")
         print(f"Ports: {', '.join(map(str, self.ports))}")
@@ -836,13 +901,13 @@ class ProxyScanner:
             
             self.save_config()
             print(f"{Colors.GREEN}[✓] Settings updated{Colors.RESET}")
+            self.add_scan_result("Settings Update", "Modified scanner settings", "Success")
         except ValueError:
             print(f"{Colors.RED}[!] Invalid input{Colors.RESET}")
         
         input("\nPress Enter to continue...")
 
     def show_debug_log(self) -> None:
-        """Display debug information and save to file"""
         clear_screen()
         print(f"{Colors.CYAN}=== Debug Information ==={Colors.RESET}")
         
@@ -863,7 +928,6 @@ class ProxyScanner:
         input("\nPress Enter to continue...")
 
     def toggle_debug_mode(self) -> None:
-        """Toggle debug mode on/off"""
         self.debug_mode = not self.debug_mode
         status = "ON" if self.debug_mode else "OFF"
         color = Colors.GREEN if self.debug_mode else Colors.RED
@@ -872,21 +936,21 @@ class ProxyScanner:
         input("\nPress Enter to continue...")
 
     async def main_menu(self) -> None:
-        """Async main menu with proper initialization"""
         await self.async_init()
         
         while not self.stop_event.is_set():
             clear_screen()
             print(f"""
-{Colors.CYAN}=== Iranian Proxy Scanner ==={Colors.RESET}
+{Colors.CYAN}=== Http Proxy Scanner ==={Colors.RESET}
 {Colors.GREEN}[1]{Colors.RESET} Scan for proxies
 {Colors.GREEN}[2]{Colors.RESET} Test found proxies
 {Colors.GREEN}[3]{Colors.RESET} View working proxies
-{Colors.GREEN}[4]{Colors.RESET} Update Iranian IP ranges
+{Colors.GREEN}[4]{Colors.RESET} Update IP ranges
 {Colors.GREEN}[5]{Colors.RESET} Check single proxy
 {Colors.GREEN}[6]{Colors.RESET} Settings
 {Colors.GREEN}[7]{Colors.RESET} View debug log
 {Colors.GREEN}[8]{Colors.RESET} Toggle debug mode ({'ON' if self.debug_mode else 'OFF'})
+{Colors.GREEN}[9]{Colors.RESET} Save Progress to file
 {Colors.GREEN}[0]{Colors.RESET} Exit
 """)
             choice = input(f"{Colors.BLUE}Select option:{Colors.RESET} ").strip()
@@ -910,6 +974,9 @@ class ProxyScanner:
                 self.show_debug_log()
             elif choice == "8":
                 self.toggle_debug_mode()
+            elif choice == "9":
+                self.save_results_to_file()
+                input("\nPress Enter to continue...")
             elif choice == "0":
                 break
             else:
@@ -919,7 +986,6 @@ class ProxyScanner:
         await self.close()
 
 def clear_screen() -> None:
-    """Clear terminal screen cross-platform"""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 async def main():
